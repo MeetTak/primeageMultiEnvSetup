@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+case "${DEV_ENV_MODE:-}" in
+  dev)      echo "dev (developer environment)" ;;
+  personal) echo "personal (minimal environment)" ;;
+  *)        echo "unknown environment (DEV_ENV_MODE='${DEV_ENV_MODE:-}', DEV_ENV_ROOT='${DEV_ENV_ROOT:-}')" ;;
+esac

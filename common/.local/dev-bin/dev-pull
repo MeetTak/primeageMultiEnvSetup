@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Reverse sync: copy live $HOME edits back into the repo so they can be committed.
+# Every file the repo manages is diffed against its live copy and copied back into
+# whichever tree it came from (the profile overlay if it has the file, else common/).
+# Live files the repo does not manage are only listed.
+#
+#   dev-pull [--dry]     (--dry shows the diffs, copies nothing)
+set -euo pipefail
+
+DRY_RUN=0
+[[ "${1:-}" == "--dry" ]] && DRY_RUN=1
+
+DEV_ENV_ROOT="${DEV_ENV_ROOT:-$HOME/.personal}"
+DEV_ENV_MODE="${DEV_ENV_MODE:-personal}"
+
+case "$DEV_ENV_MODE" in
+  personal) overlay="$DEV_ENV_ROOT/env" ;;
+  dev)      overlay="$DEV_ENV_ROOT/dev/env" ;;
+  *) echo "ERROR: unknown DEV_ENV_MODE '$DEV_ENV_MODE'"; exit 1 ;;
+esac
+common="$DEV_ENV_ROOT/common"
+
+log() {
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "[DRY_RUN] $1"
+  else
+    echo "$1"
+  fi
+}
+
+changed=0
+
+# files in a tree that dev-apply installs, relative to the tree (e.g. .config/tmux/tmux.conf)
+tree_files() {
+  [[ -d "$1" ]] || return 0
+  (cd "$1" && find . -type f ! -name .DS_Store | sed 's|^\./||') | while IFS= read -r rel; do
+    case "$rel" in
+      .config/*|.local/*|.bashrc|.zshrc|.zprofile|.tmux-sessionizer|.gitconfig) echo "$rel" ;;
+    esac
+  done
+}
+
+pull() {
+  local tree="$1" rel="$2"
+  local live="$HOME/$rel" repo="$tree/$rel"
+
+  if [[ ! -f "$live" ]]; then
+    log "missing in \$HOME: $rel"
+    return 0
+  fi
+  cmp -s "$live" "$repo" && return 0
+
+  changed=$((changed + 1))
+  log "changed: $rel → ${repo#"$DEV_ENV_ROOT"/}"
+  diff -u "$repo" "$live" || true
+  [[ "$DRY_RUN" == "1" ]] || cp "$live" "$repo"
+}
+
+log "pulling \$HOME → $DEV_ENV_ROOT (mode: $DEV_ENV_MODE)"
+
+# overlay files first; common files only when the overlay does not own them
+while IFS= read -r rel; do
+  pull "$overlay" "$rel"
+done < <(tree_files "$overlay")
+
+while IFS= read -r rel; do
+  [[ -f "$overlay/$rel" ]] && continue
+  pull "$common" "$rel"
+done < <(tree_files "$common")
+
+# live files inside managed folders that the repo does not have yet
+for sub in .config .local; do
+  names=$( { find "$common/$sub" "$overlay/$sub" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null; } | sort -u)
+  for name in $names; do
+    [[ -d "$HOME/$sub/$name" ]] || continue
+    while IFS= read -r live; do
+      rel="${live#"$HOME"/}"
+      [[ -f "$overlay/$rel" || -f "$common/$rel" ]] && continue
+      # installed by dev-apply from elsewhere in the repo
+      case "$rel" in
+        .local/dev-bin/dev-apply|.local/dev-bin/tmux-sessionizer) continue ;;
+        # written by apps themselves
+        .config/karabiner/automatic_backups/*|.config/nvim/lazy-lock.json.*) continue ;;
+      esac
+      log "untracked (add manually if wanted): $rel"
+    done < <(find "$HOME/$sub/$name" -type f ! -name .DS_Store)
+  done
+done
+
+log ""
+if [[ "$changed" == "0" ]]; then
+  log "no changes to pull"
+elif [[ "$DRY_RUN" == "1" ]]; then
+  log "$changed file(s) differ; run dev-pull without --dry to copy them"
+else
+  log "$changed file(s) pulled into $DEV_ENV_ROOT — review with git diff, then dev-commit"
+fi

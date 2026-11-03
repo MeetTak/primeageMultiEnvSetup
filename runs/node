@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Node via `n` (Primeagen's approach); N_PREFIX=~/.local/n is set in .zprofile
+set -euo pipefail
+
+export N_PREFIX="${N_PREFIX:-$HOME/.local/n}"
+mkdir -p "$N_PREFIX"
+
+brew list n &> /dev/null || brew install n
+n lts

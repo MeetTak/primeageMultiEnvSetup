@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Private, untracked files the public repo relies on (safe to re-run):
+#   ~/.secrets          API keys/tokens, sourced by both .zshrc files → owner-only (600)
+#   ~/.gitconfig.local  git [user] identity, included by the tracked ~/.gitconfig
+set -euo pipefail
+
+# ---------- ~/.secrets ----------
+secrets="$HOME/.secrets"
+if [[ ! -f "$secrets" ]]; then
+  ( umask 077
+    cat > "$secrets" <<'EOF'
+# ~/.secrets: sourced by ~/.zshrc. Never commit this file.
+# One export per line, for example:
+# export OPENAI_API_KEY="..."
+EOF
+  )
+  echo "created: $secrets"
+fi
+# GNU stat first (the dev profile puts coreutils' gnubin on PATH), then macOS stat
+mode="$(stat -c '%a' "$secrets" 2>/dev/null || stat -f '%Lp' "$secrets")"
+if [[ "$mode" != "600" ]]; then
+  chmod 600 "$secrets"
+  echo "secured: $secrets (chmod 600)"
+else
+  echo "ok: $secrets is 600"
+fi
+
+# ---------- ~/.gitconfig.local ----------
+local_cfg="$HOME/.gitconfig.local"
+if [[ -f "$local_cfg" ]]; then
+  echo "exists: $local_cfg"
+  exit 0
+fi
+
+name="$(git config --global user.name || true)"
+email="$(git config --global user.email || true)"
+if [[ -z "$name" || -z "$email" ]]; then
+  # after an apply, the old ~/.gitconfig is in the newest dev-env backup
+  backup="$(ls -1d "${XDG_STATE_HOME:-$HOME/.local/state}"/dev-env/backup/*/.gitconfig 2>/dev/null | sort -r | head -1 || true)"
+  if [[ -n "$backup" ]]; then
+    name="${name:-$(git config -f "$backup" user.name || true)}"
+    email="${email:-$(git config -f "$backup" user.email || true)}"
+  fi
+fi
+if [[ -z "$name" || -z "$email" ]]; then
+  read -rp "git user.name: " name
+  read -rp "git user.email: " email
+fi
+
+git config -f "$local_cfg" user.name "$name"
+git config -f "$local_cfg" user.email "$email"
+echo "wrote $local_cfg ($name <$email>)"

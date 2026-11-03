@@ -1,0 +1,16 @@
+env/.ssh/*
+!env/.ssh/config.d/
+.DS_Store
+
+# personal git identity, never tracked
+.gitconfig.local
+
+# the global git ignore skips .tmux-sessionizer; this repo is where they live
+!.tmux-sessionizer
+
+# mkdocs build output
+site/
+
+# local-only notes: kept on this machine, never pushed (the repo is public)
+CLAUDE.md
+todo.md

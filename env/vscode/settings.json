@@ -1,0 +1,94 @@
+{
+    // Reference copy only (dev-apply never installs it). Paths use $HOME to keep the
+    // username out of the public repo; VS Code does not expand $HOME, so replace it
+    // with your real home folder if you copy this into VS Code.
+    "code-runner.clearPreviousOutput": true,
+    "code-runner.runInTerminal": true,
+    "dotnet.help.firstView": "gettingStarted",
+    "extensions.confirmedUriHandlerExtensionIds": [
+        "ms-dotnettools.dotnet-interactive-vscode",
+        "ms-dotnettools.vscode-dotnet-pack"
+    ],
+    "cmake.configureOnOpen": true,
+    "window.zoomLevel": 2,
+    "files.autoSave": "afterDelay",
+    "editor.mouseWheelZoom": true,
+    "editor.accessibilitySupport": "off",
+    "editor.inlineSuggest.suppressSuggestions": true,
+    "python.defaultInterpreterPath": "$HOME/miniconda3/bin/python",
+    "terminal.integrated.inheritEnv": false,
+    "gitlens.ai.experimental.provider": "openai",
+    "gitlens.ai.experimental.openai.model": "gpt-4-turbo-preview",
+    "editor.renderWhitespace": "boundary",
+    "workbench.iconTheme": "material-icon-theme",
+    "editor.formatOnPaste": true,
+    "[pip-requirements]": {
+        
+    },
+    "git.autofetch": true,
+    "java.home": "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home",
+    "java.jdt.ls.java.home": "",
+    "leetcode.workspaceFolder": "$HOME/.leetcode",
+    "leetcode.hint.configWebviewMarkdown": false,
+    "workbench.colorTheme": "GitHub Dark",
+    "github.copilot.enable": {
+        "*": false,
+        "plaintext": false,
+        "markdown": false,
+        "scminput": false
+    },
+    "terminal.integrated.allowedLinkSchemes": [
+        "file",
+        "http",
+        "https",
+        "mailto",
+        "vscode",
+        "vscode-insiders",
+        "docker-desktop"
+    ],
+    "leetcode.hint.setDefaultLanguage": false,
+    "docker.extension.enableComposeLanguageServer": false,
+    "animations.Enabled": false,
+    "vscode_custom_css.imports": [
+        "file://$HOME/.vscode/extensions/brandonkirbyson.vscode-animations-2.0.7/dist/updateHandler.js"
+    ],
+    "github.copilot.nextEditSuggestions.enabled": true,
+    "terminal.integrated.shellIntegration.enabled": false,
+    "[json]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[dockercompose]": {
+        "editor.insertSpaces": true,
+        "editor.tabSize": 2,
+        "editor.autoIndent": "advanced",
+        "editor.quickSuggestions": {
+            "other": true,
+            "comments": false,
+            "strings": true
+        },
+        "editor.defaultFormatter": "redhat.vscode-yaml"
+    },
+    "[github-actions-workflow]": {
+        "editor.defaultFormatter": "redhat.vscode-yaml"
+    },
+    "leetcode.showDescription": "In File Comment",
+    "chat.viewSessions.orientation": "stacked",
+    "workbench.editorAssociations": {
+        "*.copilotmd": "vscode.markdown.preview.editor",
+        "*.pdf": "default"
+    },
+    "yaml.disableSchemaDetection": [
+        "**/.github/workflows/*.yml",
+        "**/.github/workflows/*.yaml",
+        "**/.gitea/workflows/*.yml",
+        "**/.gitea/workflows/*.yaml",
+        "**/.forgejo/workflows/*.yml",
+        "**/.forgejo/workflows/*.yaml"
+    ],
+    "editor.fontSize": 14,
+    "workbench.colorTheme": "Default Dark Modern",
+    "remote.SSH.remotePlatform": {
+        "homelab": "linux"
+    },
+    "remote.SSH.useLocalServer": false
+}

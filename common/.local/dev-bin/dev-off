@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Switch to the personal profile (env/ overlay on top of common/)
+if [[ "${DEV_ENV_MODE:-}" == "personal" && "${1:-}" != "--dry" ]]; then
+  echo "You are already in the personal environment (run dev-apply to re-apply)"
+  exit 0
+fi
+
+DEV_ENV_MODE=personal "${DEV_ENV_ROOT:-$HOME/.personal}/dev-apply" "$@" || exit $?
+
+[[ "${1:-}" == "--dry" ]] || printf "\nRun 'exec zsh' or open a new terminal to apply changes\n"

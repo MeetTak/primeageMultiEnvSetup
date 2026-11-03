@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Run the install scripts in runs/ (port of ThePrimeagen/dev's `run`).
+#
+#   ./run              run every script
+#   ./run tmux         only scripts whose name contains "tmux"
+#   ./run --dry        list what would run
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+export DEV_ENV_ROOT="${DEV_ENV_ROOT:-$script_dir}"
+
+grep=""
+dry_run="0"
+
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--dry" ]]; then
+    dry_run="1"
+  else
+    grep="$1"
+  fi
+  shift
+done
+
+log() {
+  if [[ $dry_run == "1" ]]; then
+    echo "[DRY_RUN]: $1"
+  else
+    echo "$1"
+  fi
+}
+
+log "RUN: root: $DEV_ENV_ROOT -- grep: ${grep:-<all>}"
+
+for s in "$DEV_ENV_ROOT"/runs/*; do
+  [[ -f "$s" && -x "$s" ]] || continue
+
+  if [[ -n "$grep" && "$(basename "$s")" != *"$grep"* ]]; then
+    log "grep \"$grep\" filtered out $s"
+    continue
+  fi
+
+  log "running script: $s"
+  if [[ $dry_run == "0" ]]; then
+    "$s"
+  fi
+done

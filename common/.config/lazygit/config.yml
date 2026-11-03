@@ -1,0 +1,5 @@
+# lazygit config (also opened as a tmux popup with prefix g)
+os:
+  editPreset: nvim
+gui:
+  nerdFontsVersion: "3"

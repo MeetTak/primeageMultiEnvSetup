@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# Copy this repo's configs into $HOME: common/ first, then the profile overlay
+# (env/ for "personal", dev/env/ for "dev"). Anything replaced is moved into a
+# timestamped backup folder instead of being deleted.
+#
+#   DEV_ENV_MODE=dev dev-apply [--dry]
+set -euo pipefail
+
+# ---------- config ----------
+DRY_RUN=0
+[[ "${1:-}" == "--dry" ]] && DRY_RUN=1
+
+DEV_ENV_ROOT="${DEV_ENV_ROOT:-$HOME/.personal}"
+DEV_ENV_MODE="${DEV_ENV_MODE:-personal}"
+
+case "$DEV_ENV_MODE" in
+  personal) overlay="$DEV_ENV_ROOT/env" ;;
+  dev)      overlay="$DEV_ENV_ROOT/dev/env" ;;
+  *) echo "ERROR: unknown DEV_ENV_MODE '$DEV_ENV_MODE' (use personal or dev)"; exit 1 ;;
+esac
+common="$DEV_ENV_ROOT/common"
+
+if [[ ! -d "$common" || ! -d "$overlay" ]]; then
+  echo "ERROR: $common or $overlay not found (is DEV_ENV_ROOT=$DEV_ENV_ROOT right?)"
+  exit 1
+fi
+
+backup_root="${XDG_STATE_HOME:-$HOME/.local/state}/dev-env/backup"
+# unique per run, so two applies in the same second never share (and overwrite) a backup
+backup_dir="$backup_root/$(date +%Y%m%d-%H%M%S)-$$"
+
+log() {
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "[DRY_RUN] $1"
+  else
+    echo "$1"
+  fi
+}
+
+# run a command, or only print it in dry mode
+run() {
+  log "    $*"
+  [[ "$DRY_RUN" == "1" ]] || "$@"
+}
+
+# ---------- helpers ----------
+# move an existing path into the backup folder, keeping its path under $HOME
+backup() {
+  local path="$1"
+  [[ -e "$path" || -L "$path" ]] || return 0
+  local rel="${path#"$HOME"/}"
+  run mkdir -p "$backup_dir/$(dirname "$rel")"
+  run mv "$path" "$backup_dir/$rel"
+}
+
+# top-level directory names under <tree>/<sub>
+top_dirs() {
+  [[ -d "$1/$2" ]] || return 0
+  find "$1/$2" -mindepth 1 -maxdepth 1 -type d -exec basename {} \;
+}
+
+# Each top-level folder under .config/.local that the repo manages is replaced
+# as a whole: back up the live one, copy common's, then merge the overlay's in.
+update_dirs() {
+  local sub="$1" dest="$2"
+  local names
+  names=$( { top_dirs "$common" "$sub"; top_dirs "$overlay" "$sub"; } | sort -u)
+
+  run mkdir -p "$dest"
+  for name in $names; do
+    log "updating: $dest/$name"
+    backup "$dest/$name"
+    if [[ -d "$common/$sub/$name" ]]; then
+      run cp -R "$common/$sub/$name" "$dest/$name"
+    else
+      run mkdir -p "$dest/$name"
+    fi
+    if [[ -d "$overlay/$sub/$name" ]]; then
+      run cp -R "$overlay/$sub/$name/." "$dest/$name/"
+    fi
+  done
+}
+
+# top-level file names under <tree>/<sub> (e.g. starship.toml)
+top_files() {
+  [[ -d "$1/$2" ]] || return 0
+  find "$1/$2" -mindepth 1 -maxdepth 1 -type f ! -name .DS_Store -exec basename {} \;
+}
+
+# Top-level files under .config/.local (e.g. ~/.config/starship.toml): back up the
+# live one and copy the repo's; the overlay's version wins over common's.
+update_files() {
+  local sub="$1" dest="$2"
+  local names src
+  names=$( { top_files "$common" "$sub"; top_files "$overlay" "$sub"; } | sort -u)
+
+  for name in $names; do
+    src="$common/$sub/$name"
+    [[ -f "$overlay/$sub/$name" ]] && src="$overlay/$sub/$name"
+    log "replacing: $dest/$name"
+    backup "$dest/$name"
+    run cp "$src" "$dest/$name"
+  done
+}
+
+# copy a single dotfile; the overlay's version wins over common's
+copy_dotfile() {
+  local name="$1" src=""
+  if [[ -f "$overlay/$name" ]]; then
+    src="$overlay/$name"
+  elif [[ -f "$common/$name" ]]; then
+    src="$common/$name"
+  else
+    return 0
+  fi
+  log "replacing: $HOME/$name"
+  backup "$HOME/$name"
+  run cp "$src" "$HOME/$name"
+}
+
+copy_file() {
+  if [[ ! -f "$1" ]]; then
+    echo "WARNING: skipping (not found): $1"
+    return 0
+  fi
+  log "installing: $2"
+  run cp "$1" "$2"
+  run chmod +x "$2"
+}
+
+# ---------- execution ----------
+log "env root: $DEV_ENV_ROOT"
+log "mode: $DEV_ENV_MODE (overlay: ${overlay#"$DEV_ENV_ROOT"/})"
+log "backups: $backup_dir"
+
+update_dirs  ".config" "${XDG_CONFIG_HOME:-$HOME/.config}"
+update_files ".config" "${XDG_CONFIG_HOME:-$HOME/.config}"
+update_dirs  ".local"  "$HOME/.local"
+
+for f in .bashrc .zshrc .zprofile .tmux-sessionizer .gitconfig; do
+  copy_dotfile "$f"
+done
+
+# tmux now reads ~/.config/tmux/tmux.conf; retire the old file so there is one source
+if [[ -f "$HOME/.tmux.conf" ]]; then
+  log "retiring: $HOME/.tmux.conf (now ~/.config/tmux/tmux.conf)"
+  backup "$HOME/.tmux.conf"
+fi
+
+copy_file "$DEV_ENV_ROOT/tmux-sessionizer/tmux-sessionizer" "$HOME/.local/dev-bin/tmux-sessionizer"
+copy_file "$DEV_ENV_ROOT/dev-apply" "$HOME/.local/dev-bin/dev-apply"
+
+# warn when an older copy earlier on PATH would run instead of what was just installed
+# (e.g. leftover dev-* scripts in ~/.local/bin)
+if [[ "$DRY_RUN" == "0" ]]; then
+  for f in "$HOME/.local/dev-bin"/*; do
+    [[ -f "$f" ]] || continue
+    name="$(basename "$f")"
+    first="$(type -P "$name" || true)"
+    if [[ -n "$first" && "$first" != "$f" ]]; then
+      echo "WARNING: '$name' runs $first, not $f (earlier on PATH); remove or rename it"
+    fi
+  done
+fi
+
+# keep the 10 newest backups
+if [[ "$DRY_RUN" == "0" && -d "$backup_root" ]]; then
+  ls -1d "$backup_root"/*/ 2>/dev/null | sort -r | tail -n +11 | while IFS= read -r old; do
+    rm -rf "$old"
+  done
+fi
+
+log "$DEV_ENV_MODE environment applied"

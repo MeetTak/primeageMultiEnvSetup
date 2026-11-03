@@ -1,0 +1,4 @@
+**/.claude/settings.local.json
+
+# per-project tmux-sessionizer hydrate files (sources live in ~/.personal/projects)
+.tmux-sessionizer

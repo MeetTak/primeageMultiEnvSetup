@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Sourced by tmux-sessionizer in window 1 of a new tenderScout session.
+# run_in starts each command in its own login shell (so the zsh `docker` function,
+# Pi first then Colima, works) and drops back to a shell on exit or Ctrl-C.
+run_in() { tmux new-window -dn "$1" -c "$PWD" "zsh -lic '$2; exec zsh -l'"; }
+
+# postgres + redis
+run_in services "docker compose up"
+# tests in watch mode: re-run pytest whenever a .py file changes
+run_in tests "source venv/bin/activate && watchexec -e py -- pytest -q"
+
+source venv/bin/activate
+nvim .
+clear

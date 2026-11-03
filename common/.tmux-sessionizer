@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Sourced in every new tmux-sessionizer session (a project's own .tmux-sessionizer wins).
+# Window 1 is neovim, window 2 ("scratch") is where you run commands.
+
+# don't hydrate the home-folder session
+if [[ "$(pwd)" == "$HOME" ]]; then
+    clear
+    return
+fi
+
+tmux new-window -dn scratch
+nvim .
+clear

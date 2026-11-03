@@ -1,0 +1,16 @@
+# Tracked in a PUBLIC repo: keep [user] (name/email) in ~/.gitconfig.local,
+# which `./run git` creates from your current settings.
+[include]
+	path = ~/.gitconfig.local
+[filter "lfs"]
+	process = git-lfs filter-process
+	required = true
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+[core]
+	autocrlf = false
+	editor = nvim
+[pull]
+	rebase = false
+[http]
+	postBuffer = 524288000

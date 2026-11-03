@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Commit and push everything in the dotfiles repo (Primeagen's dev-commit)
+set -euo pipefail
+root="${DEV_ENV_ROOT:-$HOME/.personal}"
+
+git -C "$root" add -A
+if git -C "$root" diff --cached --quiet; then
+  echo "nothing to commit in $root"
+  exit 0
+fi
+git -C "$root" commit -m "dev: $(date +%F)"
+git -C "$root" push

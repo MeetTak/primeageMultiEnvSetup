@@ -1,0 +1,392 @@
+#!/usr/bin/env bash
+# Tests for dev-apply, dev-pull, dev-on/off, run, runs/git, runs/projects and the
+# shell files. Everything runs against a COPY of the repo and a throwaway $HOME,
+# so your real files are never touched.
+#
+#   tests/run            all tests
+#   tests/run pull       only tests whose name contains "pull"
+set -uo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+filter="${1:-}"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/dev-env-tests.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+
+pass=0 fail=0 skip=0
+failures=()
+
+# ---------- helpers ----------
+# each test runs in its own subshell, so exit ends just that test
+fail() { echo "    ✗ $*"; exit 1; }
+assert_file()    { [[ -f "$1" ]] || fail "missing file: ${1#"$WORK"/}"; }
+assert_no_file() { [[ ! -e "$1" ]] || fail "should not exist: ${1#"$WORK"/}"; }
+assert_same()    { cmp -s "$1" "$2" || fail "differs: ${1#"$WORK"/} vs ${2#"$WORK"/}"; }
+assert_contains() { grep -qF -- "$2" <<< "$1" || fail "output lacks: $2"; }
+assert_not_contains() { ! grep -qF -- "$2" <<< "$1" || fail "output should not contain: $2"; }
+
+# fresh repo copy + fake home for each test
+setup() {
+  R="$WORK/$1/repo"
+  H="$WORK/$1/home"
+  mkdir -p "$R" "$H"
+  (cd "$REPO" && tar --exclude .git --exclude .DS_Store -cf - .) | (cd "$R" && tar -xf -)
+  if [[ ! -f "$R/tmux-sessionizer/tmux-sessionizer" ]]; then
+    # submodule not initialised in this checkout: stand-in so dev-apply has a file to install
+    mkdir -p "$R/tmux-sessionizer"
+    printf '#!/usr/bin/env bash\necho sessionizer\n' > "$R/tmux-sessionizer/tmux-sessionizer"
+  fi
+}
+
+# run a command as if $H were $HOME, with only system dirs + the fake dev-bin on PATH
+in_home() {
+  env -i HOME="$H" USER="${USER:-test}" TERM=dumb \
+    PATH="$H/.local/bin:$H/.local/dev-bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin" \
+    DEV_ENV_ROOT="$R" "$@"
+}
+
+run_test() {
+  local name="$1"
+  [[ -n "$filter" && "$name" != *"$filter"* ]] && return 0
+  # a plain statement on purpose: inside `if`, `||` or `&&` bash disables set -e,
+  # so a crashing command would not stop the test
+  local rc
+  ( set -e; "$name" )
+  rc=$?
+  if [[ $rc == 0 ]]; then
+    echo "  ✓ $name"; pass=$((pass + 1))
+  elif [[ $rc == 77 ]]; then
+    echo "  - $name (skipped)"; skip=$((skip + 1))
+  else
+    echo "  ✗ $name"; fail=$((fail + 1)); failures+=("$name")
+  fi
+}
+
+# ---------- tests ----------
+test_syntax() {
+  local f
+  for f in "$REPO"/dev-apply "$REPO"/run "$REPO"/init "$REPO"/runs/* \
+           "$REPO"/common/.local/dev-bin/* "$REPO"/dev/env/.local/dev-bin/* \
+           "$REPO"/common/.tmux-sessionizer "$REPO"/projects/*/.tmux-sessionizer \
+           "$REPO"/projects/*.tmux-sessionizer "$REPO"/tests/run; do
+    [[ -f "$f" ]] || continue
+    # only shell scripts (e.g. dev-bin/unzipAndOpen is a Java script)
+    head -1 "$f" | grep -qE '^#!.*(bash|/sh)' || continue
+    bash -n "$f" || fail "bash syntax: $f"
+  done
+  for f in "$REPO"/env/.zshrc "$REPO"/env/.zprofile "$REPO"/dev/env/.zshrc "$REPO"/dev/env/.zprofile; do
+    zsh -n "$f" || fail "zsh syntax: $f"
+  done
+}
+
+test_scripts_executable() {
+  local f
+  for f in "$REPO"/dev-apply "$REPO"/run "$REPO"/init "$REPO"/runs/* "$REPO"/common/.local/dev-bin/*; do
+    [[ -x "$f" ]] || fail "not executable: ${f#"$REPO"/}"
+  done
+}
+
+test_apply_dry_changes_nothing() {
+  setup dry
+  mkdir -p "$H/.config/nvim"; echo old > "$H/.config/nvim/init.vim"; echo old > "$H/.zshrc"
+  local before after
+  before="$(cd "$H" && find . | sort)"
+  in_home DEV_ENV_MODE=dev "$R/dev-apply" --dry > /dev/null
+  after="$(cd "$H" && find . | sort)"
+  [[ "$before" == "$after" ]] || fail "--dry changed the home folder"
+  [[ "$(cat "$H/.zshrc")" == old ]] || fail "--dry changed .zshrc"
+}
+
+test_apply_dev_places_files() {
+  setup applydev
+  in_home DEV_ENV_MODE=dev "$R/dev-apply" > /dev/null
+  assert_same "$H/.zshrc" "$R/dev/env/.zshrc"
+  assert_same "$H/.zprofile" "$R/dev/env/.zprofile"
+  assert_same "$H/.bashrc" "$R/common/.bashrc"
+  assert_same "$H/.gitconfig" "$R/common/.gitconfig"
+  assert_same "$H/.tmux-sessionizer" "$R/common/.tmux-sessionizer"
+  assert_same "$H/.config/starship.toml" "$R/common/.config/starship.toml"
+  assert_same "$H/.config/tmux/tmux.conf" "$R/common/.config/tmux/tmux.conf"
+  assert_file "$H/.config/nvim/init.lua"
+  assert_file "$H/.config/personal/dev/aliases.sh"       # dev overlay
+  assert_file "$H/.local/dev-bin/unzipAndOpen"           # dev-only script merged in
+  assert_file "$H/.local/dev-bin/dev-on"                 # common script
+  assert_file "$H/.local/dev-bin/dev-apply"
+  assert_file "$H/.local/dev-bin/tmux-sessionizer"
+  [[ -x "$H/.local/dev-bin/tmux-sessionizer" ]] || fail "tmux-sessionizer not executable"
+}
+
+test_apply_personal_overlay() {
+  setup applypersonal
+  in_home DEV_ENV_MODE=personal "$R/dev-apply" > /dev/null
+  assert_same "$H/.zshrc" "$R/env/.zshrc"
+  assert_file "$H/.config/personal/docker.sh"
+  assert_no_file "$H/.config/personal/dev"
+  assert_no_file "$H/.local/dev-bin/unzipAndOpen"
+}
+
+test_apply_backs_up_and_keeps_unmanaged() {
+  setup backup
+  mkdir -p "$H/.config/nvim" "$H/.local/bin" "$H/.config/unrelated"
+  echo vimscript > "$H/.config/nvim/init.vim"
+  echo keep > "$H/.local/bin/mytool"
+  echo keep > "$H/.config/unrelated/x"
+  echo "old tmux" > "$H/.tmux.conf"
+  printf '[user]\n\temail = a@b.c\n' > "$H/.gitconfig"
+  in_home DEV_ENV_MODE=dev "$R/dev-apply" > /dev/null
+  local b
+  b="$(ls -1d "$H"/.local/state/dev-env/backup/*/ | head -1)"
+  assert_file "$b/.config/nvim/init.vim"
+  assert_file "$b/.tmux.conf"
+  assert_file "$b/.gitconfig"
+  assert_no_file "$H/.tmux.conf"                          # retired
+  assert_file "$H/.local/bin/mytool"                      # unmanaged folder untouched
+  assert_file "$H/.config/unrelated/x"
+}
+
+test_apply_twice_same_second_keeps_original() {
+  setup twice
+  echo "my original zshrc" > "$H/.zshrc"
+  in_home DEV_ENV_MODE=dev "$R/dev-apply" > /dev/null
+  in_home DEV_ENV_MODE=dev "$R/dev-apply" > /dev/null
+  grep -rqx "my original zshrc" "$H/.local/state/dev-env/backup" || fail "original .zshrc lost from backups"
+  [[ ! -d "$H/.config/nvim/nvim" ]] || fail "nested nvim/nvim from a reused backup folder"
+}
+
+test_apply_prunes_backups_to_10() {
+  setup prune
+  mkdir -p "$H/.local/state/dev-env/backup"
+  local i
+  for i in $(seq -w 1 12); do mkdir -p "$H/.local/state/dev-env/backup/200001${i}-000000"; done
+  in_home DEV_ENV_MODE=dev "$R/dev-apply" > /dev/null
+  [[ "$(ls -1 "$H/.local/state/dev-env/backup" | wc -l | tr -d ' ')" == 10 ]] || fail "expected 10 backups"
+  assert_no_file "$H/.local/state/dev-env/backup/20000101-000000"   # oldest pruned
+}
+
+test_apply_warns_on_shadowed_command() {
+  setup shadow
+  mkdir -p "$H/.local/bin"
+  printf '#!/bin/sh\necho old\n' > "$H/.local/bin/dev-apply"; chmod +x "$H/.local/bin/dev-apply"
+  local out
+  out="$(in_home DEV_ENV_MODE=dev "$R/dev-apply" 2>&1)"
+  assert_contains "$out" "WARNING: 'dev-apply' runs $H/.local/bin/dev-apply"
+}
+
+test_apply_rejects_unknown_mode() {
+  setup badmode
+  local out
+  if out="$(in_home DEV_ENV_MODE=nope "$R/dev-apply" 2>&1)"; then fail "should exit non-zero"; fi
+  assert_contains "$out" "unknown DEV_ENV_MODE"
+}
+
+test_switch_on_off() {
+  setup switch
+  in_home DEV_ENV_MODE=personal "$R/common/.local/dev-bin/dev-on" > /dev/null
+  grep -q 'DEV_ENV_MODE="dev"' "$H/.zshrc" || fail "dev-on did not apply dev .zshrc"
+  in_home DEV_ENV_MODE=dev "$R/common/.local/dev-bin/dev-off" > /dev/null
+  grep -q 'DEV_ENV_MODE="personal"' "$H/.zshrc" || fail "dev-off did not apply personal .zshrc"
+  local out
+  out="$(in_home DEV_ENV_MODE=personal "$R/common/.local/dev-bin/dev-off")"
+  assert_contains "$out" "already in the personal environment"
+  out="$(in_home DEV_ENV_MODE=dev "$R/common/.local/dev-bin/dev-status")"
+  assert_contains "$out" "dev (developer environment)"
+}
+
+test_pull_quiet_after_apply() {
+  setup pullquiet
+  in_home DEV_ENV_MODE=dev "$R/dev-apply" > /dev/null
+  local out
+  out="$(in_home DEV_ENV_MODE=dev "$R/common/.local/dev-bin/dev-pull" --dry)"
+  assert_contains "$out" "no changes to pull"
+  assert_not_contains "$out" "untracked"
+}
+
+test_pull_copies_into_owning_tree() {
+  setup pullcopy
+  in_home DEV_ENV_MODE=dev "$R/dev-apply" > /dev/null
+  echo "# edited zshrc" >> "$H/.zshrc"                        # owned by dev overlay
+  echo "# edited tmux" >> "$H/.config/tmux/tmux.conf"         # owned by common
+  echo "new" > "$H/.config/tmux/extra.conf"                   # not in repo
+  local before out
+  before="$(cat "$R/dev/env/.zshrc")"
+  out="$(in_home DEV_ENV_MODE=dev "$R/common/.local/dev-bin/dev-pull" --dry)"
+  [[ "$(cat "$R/dev/env/.zshrc")" == "$before" ]] || fail "--dry modified the repo"
+  assert_contains "$out" "untracked (add manually if wanted): .config/tmux/extra.conf"
+  in_home DEV_ENV_MODE=dev "$R/common/.local/dev-bin/dev-pull" > /dev/null
+  tail -1 "$R/dev/env/.zshrc" | grep -q "edited zshrc" || fail ".zshrc not pulled into dev/env"
+  tail -1 "$R/common/.config/tmux/tmux.conf" | grep -q "edited tmux" || fail "tmux.conf not pulled into common"
+  tail -1 "$R/env/.zshrc" | grep -q "edited zshrc" && fail "personal .zshrc wrongly modified"
+  assert_no_file "$R/common/.config/tmux/extra.conf"
+}
+
+test_run_filter_and_dry() {
+  setup run
+  local out
+  out="$(in_home "$R/run" tmux --dry)"
+  assert_contains "$out" "running script: $R/runs/tmux"
+  assert_contains "$out" "filtered out $R/runs/brew"
+  assert_not_contains "$out" "running script: $R/runs/brew"
+}
+
+test_runs_git_identity() {
+  setup git
+  command -v git > /dev/null || exit 77
+  # identity only in the backup of the old ~/.gitconfig (the state right after an apply)
+  local b="$H/.local/state/dev-env/backup/20260101-000000"
+  mkdir -p "$b"; printf '[user]\n\tname = Test User\n\temail = test@example.com\n' > "$b/.gitconfig"
+  cp "$R/common/.gitconfig" "$H/.gitconfig"
+  in_home "$R/runs/git" > /dev/null
+  [[ "$(git config -f "$H/.gitconfig.local" user.email)" == test@example.com ]] || fail "email not written"
+  [[ "$(HOME="$H" git config user.name)" == "Test User" ]] || fail "include does not resolve user.name"
+  local out
+  out="$(in_home "$R/runs/git")"
+  assert_contains "$out" "exists:"
+}
+
+test_runs_git_secrets_permissions() {
+  setup secrets
+  mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+  # missing → created owner-only, with no values in it
+  in_home "$R/runs/git" < /dev/null > /dev/null 2>&1 || true
+  assert_file "$H/.secrets"
+  [[ "$(mode_of "$H/.secrets")" == 600 ]] || fail "new ~/.secrets is $(mode_of "$H/.secrets"), want 600"
+  # existing world-readable file → tightened, contents untouched
+  printf 'export X_API_KEY="abc"\n' > "$H/.secrets"; chmod 644 "$H/.secrets"
+  local out
+  out="$(in_home "$R/runs/git" < /dev/null 2>&1 || true)"
+  assert_contains "$out" "secured: $H/.secrets"
+  [[ "$(mode_of "$H/.secrets")" == 600 ]] || fail "~/.secrets not tightened to 600"
+  grep -q 'X_API_KEY="abc"' "$H/.secrets" || fail "~/.secrets contents changed"
+  out="$(in_home "$R/runs/git" < /dev/null 2>&1 || true)"
+  assert_contains "$out" "ok: $H/.secrets is 600"
+}
+
+test_runs_projects() {
+  setup projects
+  local P="$WORK/projects/root"
+  mkdir -p "$P/starbrewCafe"                                 # tenderScout deliberately missing
+  local out
+  out="$(in_home PROJECTS_ROOT="$P" "$R/runs/projects")"
+  assert_same "$P/starbrewCafe/.tmux-sessionizer" "$R/projects/starbrewCafe/.tmux-sessionizer"
+  assert_contains "$out" "skip (no such project): $P/tenderScout"
+  assert_no_file "$P/_template.tmux-sessionizer"
+}
+
+test_no_identity_in_repo() {
+  # the repo is public: no git identity or obvious secrets in tracked files
+  local hits
+  # real email addresses (except example.com / GitHub noreply), API key assignments
+  # with a literal value, private keys
+  hits="$(cd "$REPO" && git grep -nIiE \
+      '[a-z0-9._%+-]+@[a-z0-9-]+\.[a-z.]{2,}|api[_-]?key[a-z_]*=["'"'"']?[a-z0-9_-]{8,}|BEGIN (RSA|OPENSSH|EC|DSA)? ?PRIVATE KEY' \
+      -- . ':!tests/run' ':!tmux-sessionizer' 2>/dev/null \
+    | /usr/bin/grep -viE '@example\.com|@users\.noreply\.github\.com|git@github\.com' || true)"
+  [[ -z "$hits" ]] || fail "possible identity/secret in repo: $hits"
+}
+
+test_no_local_only_files_or_user_paths() {
+  local f hits
+  # local-only files must be ignored and not tracked
+  for f in CLAUDE.md todo.md .DS_Store; do
+    (cd "$REPO" && git ls-files --error-unmatch "$f" > /dev/null 2>&1) && fail "$f is tracked by git (must stay local-only)"
+    (cd "$REPO" && git check-ignore -q "$f") || fail "$f is not in .gitignore"
+  done
+  # no /Users/<username> paths in tracked files (use $HOME or ~)
+  hits="$(cd "$REPO" && git grep -nIF "/Users/${USER:-$(id -un)}" -- . ':!tests/run' ':!tmux-sessionizer' 2>/dev/null || true)"
+  [[ -z "$hits" ]] || fail "username path in tracked files: $hits"
+}
+
+test_hydrate_files_not_ignored() {
+  local f
+  for f in common/.tmux-sessionizer projects/*/.tmux-sessionizer; do
+    if (cd "$REPO" && git -c core.excludesFile=common/.config/git/ignore check-ignore -q "$f"); then
+      fail "$f would be ignored by the global git ignore"
+    fi
+  done
+}
+
+# ---------- docs stay in sync with the code (local CLAUDE.md "Documentation rule") ----------
+test_docs_cover_commands() {
+  local guide="$REPO/docs/GUIDE.md" f name
+  assert_file "$guide"
+  for f in "$REPO"/common/.local/dev-bin/* "$REPO"/dev/env/.local/dev-bin/*; do
+    name="$(basename "$f")"
+    grep -qF "\`$name" "$guide" || fail "docs/GUIDE.md does not mention the command \`$name\`"
+  done
+}
+
+test_docs_cover_runs_scripts() {
+  local guide="$REPO/docs/GUIDE.md" readme="$REPO/README.md" f name
+  for f in "$REPO"/runs/*; do
+    name="$(basename "$f")"
+    grep -qE "^\| \`$name\` \|" "$guide" || fail "docs/GUIDE.md runs/ table has no row for \`$name\`"
+    grep -qF "\`$name\`" "$readme" || fail "README.md does not list the installer \`$name\`"
+  done
+}
+
+test_docs_cover_projects_and_links() {
+  local guide="$REPO/docs/GUIDE.md" d name
+  for d in "$REPO"/projects/*/; do
+    name="$(basename "$d")"
+    grep -qF "$name" "$guide" || fail "docs/GUIDE.md does not describe the project session \`$name\`"
+  done
+  grep -qF "docs/GUIDE.md" "$REPO/README.md" || fail "README.md does not link to docs/GUIDE.md"
+  # every in-page link in the guide points at a real heading (GitHub anchor rules)
+  local anchors links l
+  anchors="$(grep -E '^#{1,6} ' "$guide" | sed -E 's/^#+ //' | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9 _-]//g; s/ /-/g')"
+  links="$(grep -oE '\]\(#[^)]+\)' "$guide" | sed -E 's/^\]\(#//; s/\)$//' | sort -u)"
+  for l in $links; do
+    grep -qxF "$l" <<< "$anchors" || fail "docs/GUIDE.md: broken link #$l"
+  done
+}
+
+test_docs_markdown_renders_on_site() {
+  # MkDocs (Python-Markdown) needs a blank line before a list that follows a text line,
+  # and 4-space indents for nested lists; GitHub forgives both, the Pages site doesn't.
+  local f bad
+  for f in "$REPO"/docs/*.md; do
+    bad="$(awk '
+      /^[[:space:]]*```/ { fence = !fence; prev = $0; next }
+      !fence && /^([0-9]+\.|[-*]) / && prev ~ /[^[:space:]]/ && prev !~ /^[[:space:]]*([0-9]+\.|[-*]) / && prev !~ /^ / {
+        printf "%s:%d ", FILENAME, NR }
+      !fence && /^ {1,3}([0-9]+\.|[-*]) / { printf "%s:%d(nested-indent) ", FILENAME, NR }
+      { prev = $0 }' "$f")"
+    [[ -z "$bad" ]] || fail "add a blank line before the list / indent nested items 4 spaces: $bad"
+  done
+}
+
+test_docs_site_builds_strict() {
+  # the same check the GitHub Pages workflow runs; skipped unless mkdocs is installed
+  # (pip install -r requirements-docs.txt, or set MKDOCS=/path/to/mkdocs)
+  local mk="${MKDOCS:-$(command -v mkdocs || true)}"
+  [[ -n "$mk" ]] || exit 77
+  local out
+  out="$(cd "$REPO" && NO_MKDOCS_2_WARNING=1 "$mk" build --strict -d "$WORK/site" 2>&1)" \
+    || fail "mkdocs build --strict failed: $(grep -E 'WARNING|ERROR|Aborted' <<< "$out" | head -5)"
+}
+
+test_dev_shell_lazy_loads() {
+  # needs zsh plus at least one of the lazy tools installed on this machine
+  [[ -d "$HOME/.nvm" || -x "$HOME/miniconda3/bin/conda" || -d "$HOME/.sdkman" ]] || exit 77
+  local Z="$WORK/zdot"; mkdir -p "$Z"
+  cp "$REPO/dev/env/.zprofile" "$REPO/dev/env/.zshrc" "$Z/"
+  local out
+  out="$(env -i HOME="$HOME" USER="$USER" TERM=dumb PATH=/usr/bin:/bin:/usr/sbin:/sbin ZDOTDIR="$Z" \
+    zsh -l -i -c 'for t in nvm conda sdk; do print -r -- "$t:$(whence -w $t)"; done; print -r -- "nvmloaded:${NVM_BIN:-no}"' 2>/dev/null)"
+  [[ -d "$HOME/.nvm" ]] && { assert_contains "$out" "nvm:nvm: function"; assert_contains "$out" "nvmloaded:no"; }
+  [[ -x "$HOME/miniconda3/bin/conda" ]] && assert_contains "$out" "conda:conda: function"
+  [[ -d "$HOME/.sdkman" ]] && assert_contains "$out" "sdk:sdk: function"
+  return 0
+}
+
+# ---------- main ----------
+echo "dev-env tests (repo: $REPO)"
+for t in $(declare -F | awk '{print $3}' | grep '^test_'); do
+  run_test "$t"
+done
+echo
+echo "passed: $pass  failed: $fail  skipped: $skip"
+if (( fail > 0 )); then
+  printf '  failed: %s\n' "${failures[@]}"
+  exit 1
+fi

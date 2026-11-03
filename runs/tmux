@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# tmux + tpm plugins (config lives in common/.config/tmux, sessionizer in tmux-sessionizer/)
+set -euo pipefail
+
+brew list tmux &> /dev/null || brew install tmux
+brew list fzf &> /dev/null || brew install fzf
+
+tpm="$HOME/.tmux/plugins/tpm"
+[[ -d "$tpm" ]] || git clone https://github.com/tmux-plugins/tpm "$tpm"
+
+# installs the plugins listed in tmux.conf (safe to re-run)
+"$tpm/bin/install_plugins"

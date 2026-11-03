@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Template: copy to projects/<project-folder-name>/.tmux-sessionizer, then `./run projects`.
+# tmux-sessionizer sources it in window 1 of the new session (cwd = the project).
+# run_in starts a command in its own window/login shell and drops back to a shell
+# when it exits or you press Ctrl-C. Don't use single quotes inside the command.
+run_in() { tmux new-window -dn "$1" -c "$PWD" "zsh -lic '$2; exec zsh -l'"; }
+
+# a long-running process
+# run_in dev "npm run dev"
+
+# tests in watch mode (watchexec is in the Brewfile)
+# run_in tests "watchexec -e java -- ./mvnw -q test"
+
+# a plain shell for commands
+tmux new-window -dn scratch -c "$PWD"
+
+nvim .
+clear

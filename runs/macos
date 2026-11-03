@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# macOS defaults. Comment out any line you don't want; log out/in for some to apply.
+set -euo pipefail
+
+# fast key repeat (vim motions feel instant)
+defaults write NSGlobalDomain KeyRepeat -int 2
+defaults write NSGlobalDomain InitialKeyRepeat -int 15
+# hold a key to repeat it instead of showing the accent popup
+defaults write NSGlobalDomain ApplePressAndHoldEnabled -bool false
+
+# Dock: auto-hide, no delay
+defaults write com.apple.dock autohide -bool true
+defaults write com.apple.dock autohide-delay -float 0
+# don't reorder Spaces by recent use (yabai needs stable space indexes)
+defaults write com.apple.dock mru-spaces -bool false
+
+# Finder: show hidden files, extensions and the path bar
+defaults write com.apple.finder AppleShowAllFiles -bool true
+defaults write NSGlobalDomain AppleShowAllExtensions -bool true
+defaults write com.apple.finder ShowPathbar -bool true
+
+killall Dock Finder 2> /dev/null || true

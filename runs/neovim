@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Neovim + the tools the lua config expects (telescope: rg/fd, treesitter: tree-sitter CLI)
+set -euo pipefail
+
+for pkg in neovim ripgrep fd luarocks tree-sitter-cli; do
+  brew list "$pkg" &> /dev/null || brew install "$pkg"
+done
+
+# install plugins at the versions pinned in lazy-lock.json
+nvim --headless "+Lazy! restore" +qa
+
+# language servers + formatters. mason-lspconfig's ensure_installed skips headless
+# runs, so install them here; already-installed packages are skipped.
+nvim --headless "+MasonInstall lua-language-server pyright typescript-language-server jdtls gopls clangd bash-language-server stylua" +qa

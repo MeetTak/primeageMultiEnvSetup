@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# First step after cloning: fetch the tmux-sessionizer submodule (like ThePrimeagen/dev's `init`)
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+git submodule update --init --recursive

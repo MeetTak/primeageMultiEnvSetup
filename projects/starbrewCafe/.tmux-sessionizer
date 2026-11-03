@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Sourced by tmux-sessionizer in window 1 of a new starbrewCafe session.
+# run_in starts each command in its own login shell (so zsh functions like `docker`
+# work) and drops back to a normal shell when it exits or you press Ctrl-C.
+run_in() { tmux new-window -dn "$1" -c "$PWD" "zsh -lic '$2; exec zsh -l'"; }
+
+run_in web "npm run dev"
+run_in backend "npm run backend:dev"
+
+nvim .
+clear

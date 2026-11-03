@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Hammerspoon runs from ~/.hammerspoon, which is its own repo
+set -euo pipefail
+
+brew list --cask hammerspoon &> /dev/null || brew install --cask hammerspoon
+[[ -d "$HOME/.hammerspoon/.git" ]] || git clone https://github.com/MeetTak/hammerspoonConfig "$HOME/.hammerspoon"

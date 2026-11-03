@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Copy per-project tmux-sessionizer hydrate files from projects/<name>/ into each project.
+# They are git-ignored globally (common/.config/git/ignore), so the project repos stay clean.
+set -euo pipefail
+
+PROJECTS_ROOT="${PROJECTS_ROOT:-/Users/sandbox/projectGithub}"
+
+for src in "$DEV_ENV_ROOT"/projects/*/.tmux-sessionizer; do
+  [[ -f "$src" ]] || continue
+  name="$(basename "$(dirname "$src")")"
+  dest="$PROJECTS_ROOT/$name"
+  if [[ ! -d "$dest" ]]; then
+    echo "skip (no such project): $dest"
+    continue
+  fi
+  cp "$src" "$dest/.tmux-sessionizer"
+  echo "installed: $dest/.tmux-sessionizer"
+done
